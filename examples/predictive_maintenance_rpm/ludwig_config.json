@@ -1,0 +1,5 @@
+{
+  "input_features": [{"name": "rpm", "type": "number"}],
+  "output_features": [{"name": "imminent_failure", "type": "binary"}],
+  "trainer": {"epochs": 10, "early_stop": 10}
+}

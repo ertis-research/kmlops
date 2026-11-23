@@ -1,4 +1,5 @@
 import json
+from typing import List, Optional
 
 from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query, UploadFile
 from kubernetes.client.rest import ApiException
@@ -11,6 +12,8 @@ from src.services.trainings import NoActiveTraining
 
 router = APIRouter()
 
+MAX_METRIC_KEYS = 100
+
 
 def mlflow_enabled() -> bool:
     return get_settings().mlflow_enabled
@@ -22,9 +25,14 @@ def home():
     return {"message": "Welcome to the dflow API. Go to /docs to view the interface."}
 
 @router.get("/api/mlops/experiments")
-def get_experiments(page: int = Query(0, ge=0), pageSize: int = Query(20, ge=1, le=1000), search: str = ''):
+def get_experiments(
+    page: int = Query(1, ge=1, description="Page number, starting at 1"),
+    pageSize: int = Query(20, ge=1, le=1000, description="Items per page"),
+    search: str = '',
+):
     """
     Returns one entry per experiment (model), merging local trainings and MLflow history.
+    Paginated with 1-based `page`; an out-of-range page returns empty `results`.
     `status` is one of: queued, launching_job, training, completed, failed
     (`status_reason` explains failures).
     """
@@ -129,10 +137,16 @@ def cancel_training(experiment_name: str):
         raise HTTPException(status_code=404, detail=f"No training in progress for experiment '{experiment_name}'")
 
 @router.get("/api/mlops/experiments/{experiment_name}/runs")
-def get_runs(experiment_name: str, page: int = Query(0, ge=0), pageSize: int = Query(20, ge=1, le=1000), search: str = ''):
+def get_runs(
+    experiment_name: str,
+    page: int = Query(1, ge=1, description="Page number, starting at 1"),
+    pageSize: int = Query(20, ge=1, le=1000, description="Items per page"),
+    search: str = '',
+):
     """
     Returns the list of runs for a given experiment name from MLflow.
     Includes metrics, parameters, and tags for each run.
+    Paginated with 1-based `page`; an out-of-range page returns empty `results`.
     """
     if not mlflow_enabled():
         raise HTTPException(status_code=500, detail="MLflow tracking URI is not configured")
@@ -146,3 +160,25 @@ def get_runs(experiment_name: str, page: int = Query(0, ge=0), pageSize: int = Q
         print(f"Error searching runs in MLflow for '{experiment_name}': {str(e)}")
         # If it's a known error from mlflow or pandas, we catch it
         raise HTTPException(status_code=500, detail=f"Error searching runs in MLflow: {str(e)}")
+
+@router.get("/api/mlops/experiments/{experiment_name}/runs/{run_id}/metrics/history")
+def get_metric_history(experiment_name: str, run_id: str, keys: Optional[List[str]] = Query(None)):
+    """
+    Returns the step-by-step history of the metrics of a run from MLflow.
+    `keys` is optional and repeatable (`?keys=a&keys=b`); if omitted, all the metrics of the run are returned.
+    """
+    if keys is not None and len(set(keys)) > MAX_METRIC_KEYS:
+        raise HTTPException(status_code=422, detail=f"At most {MAX_METRIC_KEYS} keys can be requested")
+
+    if not mlflow_enabled():
+        raise HTTPException(status_code=500, detail="MLflow tracking URI is not configured")
+
+    try:
+        return runs.get_metric_history(experiment_name, run_id, keys)
+    except KeyError:
+        raise HTTPException(status_code=404, detail=f"There is no experiment with name {str(experiment_name)}")
+    except runs.RunNotFound:
+        raise HTTPException(status_code=404, detail=f"There is no run {run_id} in experiment {experiment_name}")
+    except Exception as e:
+        print(f"Error reading metric history of run '{run_id}' in '{experiment_name}': {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error reading metric history from MLflow: {str(e)}")

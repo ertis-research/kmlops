@@ -43,6 +43,17 @@ class Run(TypedDict):
     tags: dict[str, str]
 
 
+class MetricPoint(TypedDict):
+    step: int
+    value: float
+    timestamp: int
+
+
+class MetricHistory(TypedDict):
+    run_id: str
+    metrics: dict[str, list[MetricPoint]]
+
+
 class TrainingLogs(TypedDict):
     experiment_name: str
     training_id: Optional[str]

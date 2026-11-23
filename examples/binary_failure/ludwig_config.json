@@ -1,0 +1,11 @@
+{
+  "input_features": [
+    {"name": "rpm", "type": "number"},
+    {"name": "temperature", "type": "number"},
+    {"name": "vibration", "type": "number"},
+    {"name": "pressure", "type": "number"},
+    {"name": "machine_type", "type": "category"}
+  ],
+  "output_features": [{"name": "failure", "type": "binary"}],
+  "trainer": {"epochs": 10, "early_stop": 10}
+}

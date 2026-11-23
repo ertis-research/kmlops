@@ -231,6 +231,18 @@ The API follows a modular path structure. Interactive documentation is available
 * **Method:** `GET`
 * **Path:** `/api/mlops/experiments`
 * **Description:** Returns one entry per experiment (model), merging local trainings and MLflow history. `GET /api/mlops/experiments/{experiment_name}` returns a single experiment with the same fields.
+* **Query params:**
+  * `page` (default `1`, 1-based; `0` or negative gives 422)
+  * `pageSize` (default `20`, max `1000`)
+  * `search` (optional, matches the experiment name)
+* **Response:** `results` plus a `pagination` object. A page beyond the last one returns an empty `results` (it is not clamped to the last page).
+
+```json
+{
+  "results": [{ "experiment_name": "my-experiment", "status": "completed" }],
+  "pagination": { "total_items": 25, "total_pages": 2, "current_page": 1, "page_size": 20, "has_next": true, "has_prev": false }
+}
+```
 
 #### Training status
 
@@ -255,7 +267,7 @@ dflow refreshes the status of active trainings in the background from the Kubern
 * **Multipart Fields:**
     | Field             | Description                                                        |
     | ----------------- | ------------------------------------------------------------------ |
-    | `csv_file`        | Dataset file to be processed (e.g. `data.csv`)                     |
+    | `csv_file`        | Dataset file to be processed (e.g. `examples/predictive_maintenance_rpm/data.csv`) |
     | `model_type`      | Internal reference algorithm (e.g. `Ludwig_Test`)                  |
     | `config_json`     | Stringified JSON object containing Ludwig configuration parameters |
     | `dependencies`    | (Optional) JSON list or comma-separated string of dependencies     |
@@ -266,13 +278,13 @@ dflow refreshes the status of active trainings in the background from the Kubern
 
 ```bash
 curl -X POST "http://localhost:8000/api/mlops/experiments" \
-  -F "csv_file=@data.csv" \
+  -F "csv_file=@examples/predictive_maintenance_rpm/data.csv" \
   -F "model_type=Ludwig_Test" \
   -F "experiment_name=Predictive_Maintenance" \
   -F "model_name=Engine_Predictor" \
   -F 'config_json={
-    "input_features": [{"name": "rpm", "type": "numerical"}],
-    "output_features": [{"name": "imminent_failure", "type": "category"}],
+    "input_features": [{"name": "rpm", "type": "number"}],
+    "output_features": [{"name": "imminent_failure", "type": "binary"}],
     "trainer": {"epochs": 10}
   }'
 ```
@@ -322,6 +334,39 @@ Cancelling only ever deletes the cancelled training itself. If a new training of
 * **Method:** `GET`
 * **Path:** `/api/mlops/experiments/{experiment_name}/runs`
 * **Description:** Retrieves all training runs associated with the experiment name from MLflow, including metrics and parameters.
+* **Query params:**
+  * `page` (default `1`, 1-based; `0` or negative gives 422)
+  * `pageSize` (default `20`, max `1000`)
+  * `search` (optional, matches run id or run name)
+* **Response:** `results` plus a `pagination` object. A page beyond the last one returns an empty `results` (it is not clamped to the last page).
+
+```json
+{
+  "results": [{ "run_id": "...", "status": "FINISHED", "metrics": {}, "params": {}, "tags": {} }],
+  "pagination": { "total_items": 25, "total_pages": 2, "current_page": 1, "page_size": 20, "has_next": true, "has_prev": false }
+}
+```
+
+### 5b. Get Metric History
+
+* **Method:** `GET`
+* **Path:** `/api/mlops/experiments/{experiment_name}/runs/{run_id}/metrics/history`
+* **Query param:** `keys` (optional, repeatable, e.g. `?keys=loss&keys=accuracy`, max `100`): metrics to return. If omitted, all the metrics of the run are returned. Duplicates are ignored.
+* **Description:** Returns the step-by-step history of the metrics of a run from MLflow. Points are sorted by `step` (then `timestamp`, in ms); non-finite values are skipped; a requested key that the run does not have gives `[]`.
+* **Responses:**
+    - `200`: the history.
+    - `404`: the experiment is not in MLflow, or the run does not exist, is deleted or belongs to another experiment.
+    - `422`: more than 100 keys.
+    - `500`: MLflow is not configured, or MLflow returned an error.
+
+```json
+{
+  "run_id": "3f2a...",
+  "metrics": {
+    "loss": [{"step": 0, "value": 0.9, "timestamp": 1760000000000}, {"step": 1, "value": 0.7, "timestamp": 1760000001000}]
+  }
+}
+```
 
 ### 6. Get Training Logs
 
@@ -407,8 +452,9 @@ Cases that return `available: false` (with `logs` empty):
 │   └── db/
 │       └── store.py           # Training store (SQLite or PostgreSQL)
 ├── tests/             # pytest suite (no external services needed)
-├── data/              # Sample datasets
-|   └── data.csv       # Sample dataset for README example POST
+├── examples/          # Sample datasets and Ludwig configs (see examples/README.md)
+│   ├── generate_examples.py  # Deterministic dataset generator
+│   └── <dataset>/     # data.csv, ludwig_config.json, README.md
 ├── docs/              # Documentation and runbooks
 ├── k8s/               # Kubernetes manifests and deploy script
 │   ├── deploy.sh       # Builds, pushes and deploys dflow from .env (image + Secrets + manifests)

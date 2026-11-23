@@ -108,7 +108,7 @@ def summarize_runs(experiment_ids: List[str]) -> Dict[str, RunSummary]:
 # ---- queries -----------------------------------------------------------------
 
 
-def get_all_experiments(mlflow_on: bool, page: int = 0, pageSize: int = 20, search: str = '') -> PaginatedResult[Experiment]:
+def get_all_experiments(mlflow_on: bool, page: int = 1, pageSize: int = 20, search: str = '') -> PaginatedResult[Experiment]:
     # Latest training per experiment name (list_all is newest first).
     latest: Dict[str, Dict[str, Any]] = {}
     for training in get_store().list_all():

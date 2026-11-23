@@ -1,0 +1,10 @@
+{
+  "input_features": [
+    {"name": "wind_speed", "type": "number"},
+    {"name": "air_density", "type": "number"},
+    {"name": "blade_pitch", "type": "number"},
+    {"name": "temperature", "type": "number"}
+  ],
+  "output_features": [{"name": "power_output", "type": "number"}],
+  "trainer": {"epochs": 20, "early_stop": 20}
+}

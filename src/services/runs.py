@@ -1,14 +1,23 @@
 """MLflow runs of an experiment."""
 import datetime
+import math
+from concurrent.futures import ThreadPoolExecutor
 from typing import Any, Generator, Optional, cast
 
 import mlflow
 import pandas as pd
+from mlflow.exceptions import MlflowException
+from mlflow.protos.databricks_pb2 import RESOURCE_DOES_NOT_EXIST, ErrorCode
+from mlflow.tracking import MlflowClient
 
 from src.db.store import get_store
 from src.integrations.mlflow_tracking import get_active_experiment
-from src.schemas import PaginatedResult, Run
+from src.schemas import MetricHistory, MetricPoint, PaginatedResult, Run
 from src.services.pagination import paginate
+
+
+class RunNotFound(Exception):
+    """The run does not exist (or is deleted, or belongs to another experiment)."""
 
 
 def to_timestamp_ms(val: Any) -> Optional[int]:
@@ -128,7 +137,7 @@ def iter_experiment_runs(experiment_name: str) -> Generator[Run, None, None]:
         yield parse_flattened_run(run_dict)
 
 
-def get_runs(experiment_name: str, page: int = 0, pageSize: int = 20, search: str = '') -> PaginatedResult[Run]:
+def get_runs(experiment_name: str, page: int = 1, pageSize: int = 20, search: str = '') -> PaginatedResult[Run]:
     all_runs = list(iter_experiment_runs(experiment_name))
 
     if search:
@@ -145,3 +154,39 @@ def get_runs(experiment_name: str, page: int = 0, pageSize: int = 20, search: st
         filtered_runs = all_runs
 
     return paginate(filtered_runs, page, pageSize)
+
+
+def get_metric_history(experiment_name: str, run_id: str, keys: Optional[list[str]] = None) -> MetricHistory:
+    """Step-by-step history of the metrics of a run. Raises KeyError (experiment) or RunNotFound (run)."""
+    mlflow_exp = get_active_experiment(experiment_name)
+    if mlflow_exp is None:
+        raise KeyError(experiment_name)
+
+    client = MlflowClient()
+    try:
+        run = client.get_run(run_id)
+    except MlflowException as e:
+        if e.error_code == ErrorCode.Name(RESOURCE_DOES_NOT_EXIST):
+            raise RunNotFound(run_id) from e
+        raise
+
+    if run.info.lifecycle_stage == "deleted" or str(run.info.experiment_id) != str(mlflow_exp.experiment_id):
+        raise RunNotFound(run_id)
+
+    if keys is None:
+        keys = list(run.data.metrics.keys())
+    keys = list(dict.fromkeys(keys))
+
+    def fetch(key: str) -> list[MetricPoint]:
+        points = [
+            MetricPoint(step=int(m.step), value=float(m.value), timestamp=int(m.timestamp))
+            for m in client.get_metric_history(run_id, key)
+            if math.isfinite(m.value)
+        ]
+        points.sort(key=lambda p: (p["step"], p["timestamp"]))
+        return points
+
+    with ThreadPoolExecutor(max_workers=8) as pool:
+        results = list(pool.map(fetch, keys))
+
+    return MetricHistory(run_id=run_id, metrics=dict(zip(keys, results)))
