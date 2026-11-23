@@ -1,9 +1,9 @@
 """
-Centralised configuration for dflow.
+Centralised configuration for kmlops.
 
 Every setting comes from environment variables (a local ``.env`` file in
 development, a Secret/ConfigMap in Kubernetes). Required variables have no
-default: if one is missing, dflow refuses to start and names the variable.
+default: if one is missing, kmlops refuses to start and names the variable.
 """
 import os
 from dataclasses import dataclass
@@ -73,7 +73,7 @@ class Settings:
     training_job_ttl_seconds: int
     training_job_backoff_limit: int
 
-    # MLflow (optional: without it dflow only tracks local trainings)
+    # MLflow (optional: without it kmlops only tracks local trainings)
     mlflow_tracking_uri: Optional[str]
 
     # Status tracking
@@ -115,7 +115,7 @@ def get_settings() -> Settings:
         status_poll_interval_seconds=_int("STATUS_POLL_INTERVAL_SECONDS", 10, minimum=1),
         launch_timeout_seconds=_int("LAUNCH_TIMEOUT_SECONDS", 300, minimum=1),
         db_backend=db_backend,
-        sqlite_path=_optional("SQLITE_PATH", "/data/dflow.db") or "",
+        sqlite_path=_optional("SQLITE_PATH", "/data/kmlops.db") or "",
         postgres_host=_optional("POSTGRES_HOST"),
         postgres_port=_int("POSTGRES_PORT", 5432, minimum=1, maximum=65535),
         postgres_db=_optional("POSTGRES_DB"),

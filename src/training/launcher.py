@@ -28,12 +28,12 @@ def build_training_job(training_id: str, config: dict, minio_path: str, experime
         "MINIO_SECRET_KEY": settings.minio_secret_key,
         "MINIO_SECURE": "true" if settings.minio_secure else "false",
         "MLFLOW_TRACKING_URI": settings.mlflow_tracking_uri or "",
-        "DFLOW_TRAINING_ID": training_id,
-        "DFLOW_EXPERIMENT_NAME": experiment_name,
-        "DFLOW_MODEL_NAME": model_name,
-        "DFLOW_BUCKET_NAME": settings.bucket_name,
-        "DFLOW_MINIO_PATH": minio_path,
-        "DFLOW_LUDWIG_CONFIG": json.dumps(config),
+        "KMLOPS_TRAINING_ID": training_id,
+        "KMLOPS_EXPERIMENT_NAME": experiment_name,
+        "KMLOPS_MODEL_NAME": model_name,
+        "KMLOPS_BUCKET_NAME": settings.bucket_name,
+        "KMLOPS_MINIO_PATH": minio_path,
+        "KMLOPS_LUDWIG_CONFIG": json.dumps(config),
     }
     bash_command = f"pip install minio mlflow -q && cat << 'EOF' > run.py\n{TRAINING_SCRIPT}\nEOF\npython -u run.py"
 

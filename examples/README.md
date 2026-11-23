@@ -1,6 +1,6 @@
 # Examples
 
-Sample datasets and Ludwig configs to try dflow. Each folder has `data.csv`, `ludwig_config.json` and a `README.md` with the curl command.
+Sample datasets and Ludwig configs to try kmlops. Each folder has `data.csv`, `ludwig_config.json` and a `README.md` with the curl command.
 
 | Folder | Task | Rows | Split |
 | --- | --- | --- | --- |

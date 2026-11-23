@@ -68,7 +68,7 @@ class FakeStore:
 
 
 def make_training(status="training", training_id="abc12345", job_name=None):
-    return {"training_id": training_id, "status": status, "job_name": job_name or f"dflow-train-job-{training_id}"}
+    return {"training_id": training_id, "status": status, "job_name": job_name or f"kmlops-train-job-{training_id}"}
 
 
 def make_pod(name="pod-1", phase="Running", created="2026-01-01T00:00:00Z"):

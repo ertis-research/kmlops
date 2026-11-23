@@ -1,18 +1,18 @@
 #!/usr/bin/env bash
-# Deploys dflow to Kubernetes using the values of a .env file.
+# Deploys kmlops to Kubernetes using the values of a .env file.
 #
 #   k8s/deploy.sh [ENV_FILE]          (default: .env in the repository root)
 #   DRY_RUN=1 k8s/deploy.sh           (validate everything, change nothing, build nothing)
 #   SKIP_BUILD=1 k8s/deploy.sh        (deploy the image already in the registry)
 #
 # From the .env file it:
-#   0. builds the dflow image from the repository and pushes it as DFLOW_IMAGE
+#   0. builds the kmlops image from the repository and pushes it as KMLOPS_IMAGE
 #      (with your own "docker login": REGISTRY_* is a pull-only account);
-#   1. creates/updates the "dflow-minio-credentials" Secret with dflow's configuration;
-#   2. creates/updates the "dflow-registry-creds" pull Secret, if REGISTRY_* are set;
-#   3. applies k8s/rbac.yaml and k8s/deployment.yaml (with DFLOW_IMAGE as the image)
+#   1. creates/updates the "kmlops-minio-credentials" Secret with kmlops's configuration;
+#   2. creates/updates the "kmlops-registry-creds" pull Secret, if REGISTRY_* are set;
+#   3. applies k8s/rbac.yaml and k8s/deployment.yaml (with KMLOPS_IMAGE as the image)
 #      in the namespace KUBERNETES_NAMESPACE;
-#   4. restarts dflow so it picks up the new configuration and image.
+#   4. restarts kmlops so it picks up the new configuration and image.
 #
 # Secrets are written with create/replace, never "kubectl apply", so their values are not
 # copied into the "last-applied-configuration" annotation.
@@ -23,15 +23,15 @@ ENV_FILE="${1:-$ROOT/.env}"
 DRY_RUN="${DRY_RUN:-0}"
 SKIP_BUILD="${SKIP_BUILD:-0}"
 
-CONFIG_SECRET="dflow-minio-credentials"
-PULL_SECRET="dflow-registry-creds"
-DEPLOYMENT="dflow"
+CONFIG_SECRET="kmlops-minio-credentials"
+PULL_SECRET="kmlops-registry-creds"
+DEPLOYMENT="kmlops"
 
 # Variables used only by this script or only for local development: never copied to the cluster.
-#  - SQLITE_PATH: the local path (e.g. ./data/dflow.db) would put the database outside the volume;
-#    in the cluster dflow uses its default, /data/dflow.db, which is the persistent volume.
-#  - KUBERNETES_CONFIG_PATH: inside the cluster dflow uses its service account.
-NOT_FOR_CLUSTER="DFLOW_IMAGE REGISTRY_SERVER REGISTRY_USERNAME REGISTRY_PASSWORD SQLITE_PATH KUBERNETES_CONFIG_PATH"
+#  - SQLITE_PATH: the local path (e.g. ./data/kmlops.db) would put the database outside the volume;
+#    in the cluster kmlops uses its default, /data/kmlops.db, which is the persistent volume.
+#  - KUBERNETES_CONFIG_PATH: inside the cluster kmlops uses its service account.
+NOT_FOR_CLUSTER="KMLOPS_IMAGE REGISTRY_SERVER REGISTRY_USERNAME REGISTRY_PASSWORD SQLITE_PATH KUBERNETES_CONFIG_PATH"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 info() { echo "==> $*"; }
@@ -67,11 +67,11 @@ done < "$ENV_FILE"
 get() { echo "${ENV[$1]:-}"; }
 
 NAMESPACE="$(get KUBERNETES_NAMESPACE)"
-IMAGE="$(get DFLOW_IMAGE)"
+IMAGE="$(get KMLOPS_IMAGE)"
 [[ -n "$NAMESPACE" ]] || die "KUBERNETES_NAMESPACE is not set in $ENV_FILE"
-[[ -n "$IMAGE" ]] || die "DFLOW_IMAGE is not set in $ENV_FILE (the dflow image to deploy, e.g. <registry>/<project>/dflow:latest)"
+[[ -n "$IMAGE" ]] || die "KMLOPS_IMAGE is not set in $ENV_FILE (the kmlops image to deploy, e.g. <registry>/<project>/kmlops:latest)"
 for required in MINIO_URL MINIO_ACCESS_KEY MINIO_SECRET_KEY BUCKET_NAME; do
-    [[ -n "$(get $required)" ]] || die "$required is not set in $ENV_FILE (dflow would not start)"
+    [[ -n "$(get $required)" ]] || die "$required is not set in $ENV_FILE (kmlops would not start)"
 done
 
 KUBECTL=(kubectl -n "$NAMESPACE")
@@ -118,7 +118,7 @@ upsert_secret() {
 }
 
 # ---- 1. Configuration Secret -----------------------------------------------------
-info "Secret $CONFIG_SECRET (dflow configuration)"
+info "Secret $CONFIG_SECRET (kmlops configuration)"
 CONFIG_ENV="$TMP_DIR/config.env"
 : > "$CONFIG_ENV"
 for key in "${KEYS[@]}"; do
@@ -148,7 +148,7 @@ fi
 # ---- 3. Manifests -----------------------------------------------------------------
 info "Manifests"
 DEPLOY_MANIFEST="$TMP_DIR/deployment.yaml"
-# Replace the container image (the only indented "image:" line) with DFLOW_IMAGE.
+# Replace the container image (the only indented "image:" line) with KMLOPS_IMAGE.
 sed -E "s|^([[:space:]]+image:[[:space:]]).*|\1${IMAGE//|/\\|}|" "$ROOT/k8s/deployment.yaml" > "$DEPLOY_MANIFEST"
 grep -qE "^[[:space:]]+image: ${IMAGE//./\\.}$" "$DEPLOY_MANIFEST" || die "could not set the image in deployment.yaml"
 
@@ -161,7 +161,7 @@ if [[ "$DRY_RUN" == "1" ]]; then
 fi
 "${KUBECTL[@]}" apply -f "$ROOT/k8s/rbac.yaml" -f "$DEPLOY_MANIFEST"
 
-# ---- 4. Restart so dflow reads the new Secrets (and pulls :latest again) -----------
+# ---- 4. Restart so kmlops reads the new Secrets (and pulls :latest again) -----------
 if [[ "$EXISTED" == "1" ]]; then
     info "Restarting $DEPLOYMENT"
     "${KUBECTL[@]}" rollout restart "deployment/$DEPLOYMENT"
@@ -169,7 +169,7 @@ fi
 info "Waiting for $DEPLOYMENT"
 if ! "${KUBECTL[@]}" rollout status "deployment/$DEPLOYMENT" --timeout=300s; then
     echo
-    "${KUBECTL[@]}" get pods -l app=dflow
-    die "dflow did not become ready. Check: kubectl -n $NAMESPACE describe pod -l app=dflow (see docs/runbook.md)"
+    "${KUBECTL[@]}" get pods -l app=kmlops
+    die "kmlops did not become ready. Check: kubectl -n $NAMESPACE describe pod -l app=kmlops (see docs/runbook.md)"
 fi
-info "dflow is running in '$NAMESPACE'"
+info "kmlops is running in '$NAMESPACE'"

@@ -11,11 +11,11 @@ URL = "/api/mlops/experiments/my-exp/logs"
 NO_POD = "The training pod no longer exists; its logs are not kept."
 NOT_STARTED = "The training has not started yet."
 STARTING = "The training pod is starting."
-NOT_DFLOW = "This model was not trained by dflow, or its training is no longer kept."
+NOT_KMLOPS = "This model was not trained by kmlops, or its training is no longer kept."
 
 
 def test_active_training_returns_logs(client, set_store, k8s):
-    training = make_training("training", "abc12345", "dflow-train-job-abc12345")
+    training = make_training("training", "abc12345", "kmlops-train-job-abc12345")
     set_store(active=training, latest=training)
     k8s.pods = [make_pod("pod-xyz", "Running")]
     k8s.core = FakeCoreApi(logs="line1\nline2")
@@ -30,10 +30,10 @@ def test_active_training_returns_logs(client, set_store, k8s):
     assert body["pod_name"] == "pod-xyz"
     assert body["pod_phase"] == "Running"
     assert body["training_id"] == "abc12345"
-    assert body["job_name"] == "dflow-train-job-abc12345"
+    assert body["job_name"] == "kmlops-train-job-abc12345"
     assert body["status"] == "training"
     assert body["experiment_name"] == "my-exp"
-    assert k8s.job_pods_calls == ["dflow-train-job-abc12345"]
+    assert k8s.job_pods_calls == ["kmlops-train-job-abc12345"]
     ((args, kwargs),) = k8s.core.calls
     assert args[0] == "pod-xyz"
     assert args[1] == "test-namespace"
@@ -63,8 +63,8 @@ def test_active_training_preferred_over_latest(client, set_store, k8s):
     body = client.get(URL).json()
 
     assert body["training_id"] == "active01"
-    assert body["job_name"] == "dflow-train-job-active01"
-    assert k8s.job_pods_calls == ["dflow-train-job-active01"]
+    assert body["job_name"] == "kmlops-train-job-active01"
+    assert k8s.job_pods_calls == ["kmlops-train-job-active01"]
 
 
 def test_latest_used_when_no_active(client, set_store, k8s):
@@ -129,7 +129,7 @@ def test_read_400_pod_starting_without_waiting_reason(client, set_store, k8s):
     assert body["available"] is False
     assert body["reason"] == STARTING
     assert body["pod_name"] == "pod-1"
-    assert k8s.waiting_calls == ["dflow-train-job-abc12345"]
+    assert k8s.waiting_calls == ["kmlops-train-job-abc12345"]
 
 
 def test_read_400_pod_starting_with_waiting_reason(client, set_store, k8s):
@@ -193,7 +193,7 @@ def test_no_local_training_but_in_mlflow(client, set_store, k8s, monkeypatch):
     assert r.status_code == 200
     body = r.json()
     assert body["available"] is False
-    assert body["reason"] == NOT_DFLOW
+    assert body["reason"] == NOT_KMLOPS
     assert body["status"] == "completed"
     assert body["training_id"] is None
     assert k8s.job_pods_calls == []

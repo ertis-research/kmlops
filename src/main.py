@@ -34,7 +34,7 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="dflow API",
+    title="kmlops API",
     description="API to orchestrate ML model deployments and training",
     version="1.0.0",
     lifespan=lifespan,

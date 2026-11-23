@@ -13,7 +13,7 @@
 
 ## Ludwig config
 
-`ludwig_config.json` (split: default 0.7/0.2/0.1 applied by dflow):
+`ludwig_config.json` (split: default 0.7/0.2/0.1 applied by kmlops):
 
 ```json
 {
@@ -28,7 +28,7 @@
 }
 ```
 
-## Launch against dflow
+## Launch against kmlops
 
 ```bash
 curl -X POST "http://localhost:8000/api/mlops/experiments" \

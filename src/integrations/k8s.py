@@ -6,7 +6,7 @@ from kubernetes.client.rest import ApiException
 
 from src.config import get_settings
 
-TRAINING_ID_LABEL = "dflow/training-id"
+TRAINING_ID_LABEL = "kmlops/training-id"
 CONTAINER_NAME = "trainer"
 MAX_REASON_LENGTH = 500
 
@@ -51,7 +51,7 @@ def core_api() -> client.CoreV1Api:
 
 
 def job_name_for(training_id: str) -> str:
-    return f"dflow-train-job-{training_id.lower()}"
+    return f"kmlops-train-job-{training_id.lower()}"
 
 
 def truncate_reason(text: str) -> str:

@@ -46,7 +46,7 @@ async def get_training_logs(experiment_name: str, tail_lines: int) -> TrainingLo
             raise KeyError()
         summary = summarize_runs([mlflow_exp.experiment_id]).get(mlflow_exp.experiment_id)
         status, _ = resolve_status(None, summary)
-        return result(status, False, "This model was not trained by dflow, or its training is no longer kept.")
+        return result(status, False, "This model was not trained by kmlops, or its training is no longer kept.")
 
     training_id = training["training_id"]
     job_name = training.get("job_name") or job_name_for(training_id)

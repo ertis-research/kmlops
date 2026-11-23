@@ -1,18 +1,26 @@
-# DFlow API - MLOps Orchestrator
+# kMLOps (Kubernetes MLOps)
 
-DFlow API is an MLOps orchestration engine built to automate the Machine Learning model lifecycle. It provides a unified interface to upload datasets, define declarative training configurations, and delegate heavy computational workloads to a Kubernetes cluster. The system natively integrates with MLflow to ensure complete traceability, metrics tracking, and version control.
+**From a CSV file to a tracked, registered model with a single API call.**
+
+kMLOps is a lightweight MLOps service that turns your Kubernetes cluster into a model training platform. Upload a dataset, describe the model you want in a declarative [Ludwig](https://ludwig.ai) configuration, and kMLOps takes care of the rest: it runs the training as an isolated Kubernetes Job, records every metric, parameter and artifact in [MLflow](https://mlflow.org), and registers the resulting model, ready to be served.
+
+It is also a single entry point to your whole MLflow tracking server. Experiments created outside kMLOps are listed, inspected and managed through the same REST API, so frontends and other services never need to talk to MLflow directly.
+
+> [!NOTE]
+> kMLOps is the MLOps component of **[OpenTwinsV2](https://github.com/ertis-research/opentwins)**, the open-source platform for building digital twins, where it powers model training and experiment tracking. It has no dependency on OpenTwins and can be deployed on its own in any Kubernetes cluster.
 
 ---
 
 ## Key Features
 
-* **S3-Compatible Storage:** Secure dataset ingestion and management via MinIO.
-* **Kubernetes Orchestration:** Automated provisioning of isolated, ephemeral Jobs for individual training experiments using the official Ludwig image.
-* **Declarative Auto-ML:** Integrates with Ludwig AI to enable model training through JSON configuration schemas, abstracting boilerplate deep learning code.
-* **Unified Experiment Management:** New endpoints to list, track, and delete experiments from both local state and MLflow history.
-* **Detailed Run Tracking:** Retrieve metrics, parameters, and tags for individual training runs directly from MLflow.
-* **Asynchronous Execution:** Non-blocking API design that offloads resource-intensive tasks to the cluster backend.
-* **CORS Support:** Enabled for seamless integration with frontend applications.
+* **No-code model training:** Define models declaratively through Ludwig JSON configurations (binary and multi-class classification, regression and more), without writing deep learning code.
+* **Kubernetes-native execution:** Every training runs in its own isolated, ephemeral Job, keeping heavy workloads off the API and scaling with your cluster.
+* **Full traceability with MLflow:** Final and per-epoch metrics for the train, validation and test splits, parameters, artifacts and model versions are recorded automatically.
+* **Training lifecycle control:** Follow the status of each training, read its logs or cancel it through the API.
+* **Unified experiment management:** List, search, inspect and delete experiments and runs, whether they were trained by kMLOps or logged to MLflow by any other tool.
+* **Learning curves out of the box:** Fetch the per-epoch history of any run metric to plot training and validation curves.
+* **S3-compatible dataset storage:** Datasets are stored in MinIO, so every training can be traced back to the exact data it used.
+* **Frontend-ready API:** Asynchronous, paginated REST endpoints with CORS enabled, designed to be consumed directly by web applications.
 
 ---
 
@@ -42,8 +50,8 @@ To run this project, the following dependencies must be configured in your envir
 ### 1. Clone the repository
 
 ```bash
-git clone https://github.com/ertis-research/dflow.git
-cd dflow
+git clone https://github.com/ertis-research/kmlops.git
+cd kmlops
 ```
 
 ### 2. Create and activate a virtual environment
@@ -91,10 +99,10 @@ MLFLOW_TRACKING_URI=http://your-mlflow-host:5000
 
 # Training store (see "Training store" below)
 DB_BACKEND=sqlite
-SQLITE_PATH=./data/dflow.db
+SQLITE_PATH=./data/kmlops.db
 ```
 
-All configuration comes from environment variables. If a required variable is missing, dflow does not start and the log names the variable.
+All configuration comes from environment variables. If a required variable is missing, kmlops does not start and the log names the variable.
 
 | Variable | Required | Default | Description |
 | --- | --- | --- | --- |
@@ -110,19 +118,19 @@ All configuration comes from environment variables. If a required variable is mi
 | `STATUS_POLL_INTERVAL_SECONDS` | no | `10` | How often training statuses are refreshed |
 | `LAUNCH_TIMEOUT_SECONDS` | no | `300` | A training still `queued`/`launching_job` after this time is marked `failed` |
 | `DB_BACKEND` | no | `sqlite` | `sqlite` or `postgres` |
-| `SQLITE_PATH` | no | `/data/dflow.db` | SQLite file (when `DB_BACKEND=sqlite`) |
+| `SQLITE_PATH` | no | `/data/kmlops.db` | SQLite file (when `DB_BACKEND=sqlite`) |
 | `POSTGRES_HOST`, `POSTGRES_DB`, `POSTGRES_USER`, `POSTGRES_PASSWORD` | if `postgres` | | PostgreSQL connection |
 | `POSTGRES_PORT` | no | `5432` | PostgreSQL port |
 
 ### Training store
 
-dflow keeps its trainings in a SQL database, so they survive restarts. Choose the backend with `DB_BACKEND`:
+kmlops keeps its trainings in a SQL database, so they survive restarts. Choose the backend with `DB_BACKEND`:
 
-* **`sqlite`** (default): a file inside the dflow container, with no extra services. In Kubernetes, `k8s/deployment.yaml` mounts the `dflow-data` volume at `/data`. Without a volume (for example `docker run` without `-v`), data is lost when the container is removed. Only one replica can be used.
-* **`postgres`**: an external PostgreSQL server (the database must exist; dflow creates its table at startup). Use it to share the store or to run several replicas. In Kubernetes, create the optional `dflow-postgres` Secret, which the deployment loads automatically:
+* **`sqlite`** (default): a file inside the kmlops container, with no extra services. In Kubernetes, `k8s/deployment.yaml` mounts the `kmlops-data` volume at `/data`. Without a volume (for example `docker run` without `-v`), data is lost when the container is removed. Only one replica can be used.
+* **`postgres`**: an external PostgreSQL server (the database must exist; kmlops creates its table at startup). Use it to share the store or to run several replicas. In Kubernetes, create the optional `kmlops-postgres` Secret, which the deployment loads automatically:
 
 ```bash
-kubectl -n <YOUR_K8S_NAMESPACE> create secret generic dflow-postgres \
+kubectl -n <YOUR_K8S_NAMESPACE> create secret generic kmlops-postgres \
   --from-literal=DB_BACKEND=postgres \
   --from-literal=POSTGRES_HOST=<host> --from-literal=POSTGRES_DB=<db> \
   --from-literal=POSTGRES_USER=<user> --from-literal=POSTGRES_PASSWORD=<password>
@@ -150,13 +158,13 @@ pytest
 ### 1. Build docker image
 
 ```bash
-docker build -t <YOUR_REGISTRY>/<YOUR_PROJECT>/dflow:latest ./
+docker build -t <YOUR_REGISTRY>/<YOUR_PROJECT>/kmlops:latest ./
 ```
 
 ### 2. Push docker image into registry
 
 ```bash
-docker push <YOUR_REGISTRY>/<YOUR_PROJECT>/dflow:latest
+docker push <YOUR_REGISTRY>/<YOUR_PROJECT>/kmlops:latest
 ```
 
 After the image is pushed, it can be initialized using docker or it can be deployed on Kubernetes if wanted.
@@ -168,17 +176,17 @@ Depending on the user's needs, it can be either locally deployed using Docker or
 #### 3.1. Docker deployment
 
 ```bash
-docker run -p 8000:8000 <YOUR_REGISTRY>/<YOUR_PROJECT>/dflow:latest
+docker run -p 8000:8000 <YOUR_REGISTRY>/<YOUR_PROJECT>/kmlops:latest
 ```
 
 #### 3.2. Kubernetes deployment
 
-`k8s/deploy.sh` deploys dflow from your `.env` file (see `.env.example`). It:
-0. builds the image from the repository and pushes it as `DFLOW_IMAGE` (`docker build` + `docker push`). The push uses your own `docker login` on the registry, since `REGISTRY_*` is a pull-only account;
-1. creates or updates the `dflow-minio-credentials` Secret with dflow's configuration;
-2. creates or updates the `dflow-registry-creds` pull Secret, if `REGISTRY_*` are set;
-3. applies `k8s/rbac.yaml` and `k8s/deployment.yaml` in the `KUBERNETES_NAMESPACE` namespace, using `DFLOW_IMAGE` as the image;
-4. restarts dflow so it reads the new configuration and pulls the image again.
+`k8s/deploy.sh` deploys kmlops from your `.env` file (see `.env.example`). It:
+0. builds the image from the repository and pushes it as `KMLOPS_IMAGE` (`docker build` + `docker push`). The push uses your own `docker login` on the registry, since `REGISTRY_*` is a pull-only account;
+1. creates or updates the `kmlops-minio-credentials` Secret with kmlops's configuration;
+2. creates or updates the `kmlops-registry-creds` pull Secret, if `REGISTRY_*` are set;
+3. applies `k8s/rbac.yaml` and `k8s/deployment.yaml` in the `KUBERNETES_NAMESPACE` namespace, using `KMLOPS_IMAGE` as the image;
+4. restarts kmlops so it reads the new configuration and pulls the image again.
 
 ```bash
 docker login <YOUR_REGISTRY>    # once, with an account that can push to the image's project
@@ -193,18 +201,18 @@ What it takes from `.env`:
 
 | Variable | Used for |
 | --- | --- |
-| `KUBERNETES_NAMESPACE` | The namespace where dflow is deployed and where it launches the training Jobs |
-| `DFLOW_IMAGE` | The dflow image that the script builds, pushes and deploys |
-| `REGISTRY_SERVER`, `REGISTRY_USERNAME`, `REGISTRY_PASSWORD` | The `dflow-registry-creds` pull Secret. Required the first time: `deploy.sh` fails if `dflow-registry-creds` does not exist in the namespace and these are not set. An older `model-registry-creds` Secret is no longer reused. Once `dflow-registry-creds` exists, you can omit them to keep it |
-| Everything else | The `dflow-minio-credentials` Secret, i.e. dflow's configuration. `SQLITE_PATH` and `KUBERNETES_CONFIG_PATH` are local-only and are not copied: in the cluster dflow uses `/data/dflow.db` (the persistent volume) and its service account |
+| `KUBERNETES_NAMESPACE` | The namespace where kmlops is deployed and where it launches the training Jobs |
+| `KMLOPS_IMAGE` | The kmlops image that the script builds, pushes and deploys |
+| `REGISTRY_SERVER`, `REGISTRY_USERNAME`, `REGISTRY_PASSWORD` | The `kmlops-registry-creds` pull Secret. Required the first time: `deploy.sh` fails if `kmlops-registry-creds` does not exist in the namespace and these are not set. An older `model-registry-creds` Secret is no longer reused. Once `kmlops-registry-creds` exists, you can omit them to keep it |
+| Everything else | The `kmlops-minio-credentials` Secret, i.e. kmlops's configuration. `SQLITE_PATH` and `KUBERNETES_CONFIG_PATH` are local-only and are not copied: in the cluster kmlops uses `/data/kmlops.db` (the persistent volume) and its service account |
 
 **Registry credentials.** They need **pull permission on the registry project where the image is**; otherwise the pod stays in `ImagePullBackOff` with `401 Unauthorized`. Harbor robot accounts are usually limited to their own project. For example, a robot of project `project-a` can pull from `<registry>/project-a/...` but not from `<registry>/project-b/...`. Push the image to the robot's project, or give the robot pull permission on the image's project. Use a robot account, not a personal user.
 
 **Without the script.** The manifests need both Secrets to exist and `image:` to be edited by hand:
 
 ```bash
-kubectl -n <ns> create secret docker-registry dflow-registry-creds   --docker-server=<registry> --docker-username='<robot>' --docker-password='<token>'
-kubectl -n <ns> create secret generic dflow-minio-credentials --from-env-file=<env file without SQLITE_PATH>
+kubectl -n <ns> create secret docker-registry kmlops-registry-creds   --docker-server=<registry> --docker-username='<robot>' --docker-password='<token>'
+kubectl -n <ns> create secret generic kmlops-minio-credentials --from-env-file=<env file without SQLITE_PATH>
 kubectl apply -n <ns> -f k8s/rbac.yaml -f k8s/deployment.yaml
 ```
 
@@ -257,7 +265,7 @@ Each experiment has a `status` from this closed list and, when it failed, a `sta
 | `failed` | The training failed. `status_reason` gives the cause: the last `ERROR` line of the pod logs, the Job failure message, or e.g. `The training job no longer exists` |
 | `cancelled` | Returned by the cancel endpoint. It only appears in listings while the cleanup of a cancellation failed and is waiting to be retried (`status_reason` says why) |
 
-dflow refreshes the status of active trainings in the background from the Kubernetes Job and the MLflow run. When the latest training of an experiment has a finished MLflow run, the experiment is `completed`, so the listing never contradicts MLflow.
+kmlops refreshes the status of active trainings in the background from the Kubernetes Job and the MLflow run. When the latest training of an experiment has a finished MLflow run, the experiment is `completed`, so the listing never contradicts MLflow.
 
 ### 2. Create Experiment
 
@@ -271,7 +279,7 @@ dflow refreshes the status of active trainings in the background from the Kubern
     | `model_type`      | Internal reference algorithm (e.g. `Ludwig_Test`)                  |
     | `config_json`     | Stringified JSON object containing Ludwig configuration parameters |
     | `dependencies`    | (Optional) JSON list or comma-separated string of dependencies     |
-    | `experiment_name` | Logical grouping name in MLflow (Default: `dflow-default-experiment`) |
+    | `experiment_name` | Logical grouping name in MLflow (Default: `kmlops-default-experiment`) |
     | `model_name`      | Final model artifact name in the MLflow Model Registry (Default: `ludwig_model`) |
 
 #### Example cURL Request
@@ -318,14 +326,14 @@ Returns `409 Conflict` if the experiment already has a training in progress.
   "status": "cancelled",
   "experiment_deleted": true,
   "cleanup_complete": true,
-  "deleted": {"k8s_job": "dflow-train-job-ab12cd34", "mlflow_runs": [], "model_versions": [], "minio_objects": 1, "local_record": true},
+  "deleted": {"k8s_job": "kmlops-train-job-ab12cd34", "mlflow_runs": [], "model_versions": [], "minio_objects": 1, "local_record": true},
   "errors": []
 }
 ```
 
 If a step fails (for example, MinIO unreachable), `cleanup_complete` is `false` and `errors` says which one. In that case:
 - the training stays as `cancelled` and the experiment is not deleted;
-- dflow retries the cleanup automatically, and calling the endpoint again also retries it.
+- kmlops retries the cleanup automatically, and calling the endpoint again also retries it.
 
 Cancelling only ever deletes the cancelled training itself. If a new training of the same model has already started, it is not touched.
 
@@ -383,8 +391,8 @@ Cancelling only ever deletes the cancelled training itself. If a new training of
 {
   "experiment_name": "X",
   "training_id": "ab12cd34",
-  "job_name": "dflow-train-job-ab12cd34",
-  "pod_name": "dflow-train-job-ab12cd34-xk2lp",
+  "job_name": "kmlops-train-job-ab12cd34",
+  "pod_name": "kmlops-train-job-ab12cd34-xk2lp",
   "status": "training",
   "pod_phase": "Running",
   "logs": "Epoch 1/10 ...\n",
@@ -397,7 +405,7 @@ Cases that return `available: false` (with `logs` empty):
 - `"The training has not started yet."`: the training is `queued` or `launching_job`.
 - `"The training pod is starting."`: the pod exists but its container has not started yet (the pod waiting reason is appended in parentheses when known).
 - `"The training pod no longer exists; its logs are not kept."`: the Job or its pod has been deleted.
-- `"This model was not trained by dflow, or its training is no longer kept."`: the experiment only exists in MLflow.
+- `"This model was not trained by kmlops, or its training is no longer kept."`: the experiment only exists in MLflow.
 
 > **Note:** because of the TTL (`TRAINING_JOB_TTL_SECONDS`), the Job and its pods are deleted after the training finishes, so the logs of finished trainings are not kept.
 
@@ -457,7 +465,7 @@ Cases that return `available: false` (with `logs` empty):
 │   └── <dataset>/     # data.csv, ludwig_config.json, README.md
 ├── docs/              # Documentation and runbooks
 ├── k8s/               # Kubernetes manifests and deploy script
-│   ├── deploy.sh       # Builds, pushes and deploys dflow from .env (image + Secrets + manifests)
+│   ├── deploy.sh       # Builds, pushes and deploys kmlops from .env (image + Secrets + manifests)
 │   ├── deployment.yaml # Deployment, Service and SQLite volume
 │   └── rbac.yaml       # Permissions for training Jobs and pod logs
 ├── requirements.txt

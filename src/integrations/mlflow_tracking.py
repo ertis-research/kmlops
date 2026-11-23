@@ -1,4 +1,4 @@
-"""Helpers to relate dflow trainings with MLflow experiments and runs."""
+"""Helpers to relate kmlops trainings with MLflow experiments and runs."""
 from typing import Any, Dict, List, Optional
 
 import mlflow
@@ -7,8 +7,9 @@ from mlflow.entities import Run as MlflowRun
 from mlflow.entities import ViewType
 from mlflow.tracking import MlflowClient
 
-# Tag set by the training pod on the run it registers.
-TRAINING_ID_TAG = "dflow.training_id"
+# Tag set by the training pod on the run it registers. The pod script (trainer_script.py) cannot
+# import this module, so it hardcodes the same name: keep both in sync.
+TRAINING_ID_TAG = "kmlops.training_id"
 
 ACTIVE_RUN_STATUSES = ("RUNNING", "SCHEDULED")
 
@@ -22,9 +23,9 @@ def get_active_experiment(experiment_name: str) -> Optional[MlflowExperiment]:
 
 
 def find_training_runs(experiment_id: str, training: Dict[str, Any]) -> List[MlflowRun]:
-    """Runs created by one dflow training.
+    """Runs created by one kmlops training.
 
-    Runs are matched by the `dflow.training_id` tag. Runs without that tag (created before the tag
+    Runs are matched by the `kmlops.training_id` tag. Runs without that tag (created before the tag
     existed, or still being logged) are matched if they started after the training was created.
     At most one training per experiment can be active, so this cannot pick runs of another training.
     """

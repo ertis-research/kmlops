@@ -1,6 +1,6 @@
-"""Training script run INSIDE the training pod (not imported by dflow).
+"""Training script run INSIDE the training pod (not imported by kmlops).
 
-dflow writes this file into the Job container and runs it with python. Every per-training
+kmlops writes this file into the Job container and runs it with python. Every per-training
 value arrives through environment variables, so names or configs with quotes cannot break
 (or inject into) the code."""
 import copy
@@ -17,13 +17,13 @@ BATCH_SIZE = 1000
 
 
 def fail(phase, err):
-    # dflow reads the last 'ERROR' line of these logs as the failure reason.
+    # kmlops reads the last 'ERROR' line of these logs as the failure reason.
     print(f'ERROR {phase}: {err}', flush=True)
     sys.exit(1)
 
 
 def _clean(text):
-    # Warnings must never contain 'ERROR': dflow would take them as the failure reason.
+    # Warnings must never contain 'ERROR': kmlops would take them as the failure reason.
     return str(text).replace('ERROR', 'error')
 
 
@@ -166,11 +166,11 @@ def main():
     import mlflow
     from mlflow.tracking import MlflowClient
 
-    training_id = os.environ['DFLOW_TRAINING_ID']
-    experiment_name = os.environ['DFLOW_EXPERIMENT_NAME']
-    model_name = os.environ['DFLOW_MODEL_NAME']
-    bucket_name = os.environ['DFLOW_BUCKET_NAME']
-    minio_path = os.environ['DFLOW_MINIO_PATH']
+    training_id = os.environ['KMLOPS_TRAINING_ID']
+    experiment_name = os.environ['KMLOPS_EXPERIMENT_NAME']
+    model_name = os.environ['KMLOPS_MODEL_NAME']
+    bucket_name = os.environ['KMLOPS_BUCKET_NAME']
+    minio_path = os.environ['KMLOPS_MINIO_PATH']
     started_at_ms = int(time.time() * 1000)
 
 
@@ -197,7 +197,7 @@ def main():
     # 2. Train
     try:
         print('Parsing Ludwig Configuration...', flush=True)
-        ludwig_config = json.loads(os.environ['DFLOW_LUDWIG_CONFIG'])
+        ludwig_config = json.loads(os.environ['KMLOPS_LUDWIG_CONFIG'])
         ludwig_config['model_name'] = model_name
         ensure_split(ludwig_config)
 
@@ -249,7 +249,8 @@ def main():
     log_split_metrics(MlflowClient(), run_id, train_stats)
 
     try:
-        MlflowClient().set_tag(run_id, 'dflow.training_id', training_id)
+        # Must match TRAINING_ID_TAG in src/integrations/mlflow_tracking.py (this script cannot import src).
+        MlflowClient().set_tag(run_id, 'kmlops.training_id', training_id)
     except Exception as e:
         print('Warning: could not tag the MLflow run:', str(e), flush=True)
 

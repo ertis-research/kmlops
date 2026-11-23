@@ -4,7 +4,7 @@ Persistent storage for trainings.
 One row per training (one launch of a Kubernetes training Job). Two backends
 share the same SQL and are selected with the DB_BACKEND setting:
 
-* ``sqlite``   - a file inside the dflow container (no extra dependencies).
+* ``sqlite``   - a file inside the kmlops container (no extra dependencies).
 * ``postgres`` - an external PostgreSQL server (needs ``psycopg``).
 
 No sample or seed data is ever inserted: rows only come from POST /experiments.

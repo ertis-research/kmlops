@@ -22,7 +22,7 @@ def mlflow_enabled() -> bool:
 @router.get("/")
 def home():
     """Root endpoint to verify the API is running."""
-    return {"message": "Welcome to the dflow API. Go to /docs to view the interface."}
+    return {"message": "Welcome to the kmlops API. Go to /docs to view the interface."}
 
 @router.get("/api/mlops/experiments")
 def get_experiments(
@@ -63,7 +63,7 @@ async def create_experiment(
     model_type: str = Form(...),
     config_json: str = Form(...),
     dependencies: str = Form("[]"),
-    experiment_name: str = Form("dflow-default-experiment"),
+    experiment_name: str = Form("kmlops-default-experiment"),
     model_name: str = Form("ludwig_model")
 ):
     """

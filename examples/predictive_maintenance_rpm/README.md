@@ -1,6 +1,6 @@
 # Predictive maintenance (rpm)
 
-Small 60-row dataset (the main README POST example): engine rpm and whether failure is imminent. The first 8 rows are the original hand-written sample; the rest were appended (seed 7). A first attempt with only the 8 rows failed in dflow ("Training dataset has only 2 rows following preprocessing, need at least 3 to compute metrics"), so keep at least a few dozen rows.
+Small 60-row dataset (the main README POST example): engine rpm and whether failure is imminent. The first 8 rows are the original hand-written sample; the rest were appended (seed 7). A first attempt with only the 8 rows failed in kmlops ("Training dataset has only 2 rows following preprocessing, need at least 3 to compute metrics"), so keep at least a few dozen rows.
 
 ## Columns
 
@@ -13,7 +13,7 @@ Hand-written 8 rows plus 52 rows appended with a one-off seeded script (not prod
 
 ## Ludwig config
 
-`ludwig_config.json` (split: default 0.7/0.2/0.1 applied by dflow):
+`ludwig_config.json` (split: default 0.7/0.2/0.1 applied by kmlops):
 
 ```json
 {
@@ -23,7 +23,7 @@ Hand-written 8 rows plus 52 rows appended with a one-off seeded script (not prod
 }
 ```
 
-## Launch against dflow
+## Launch against kmlops
 
 ```bash
 curl -X POST "http://localhost:8000/api/mlops/experiments" \

@@ -13,7 +13,7 @@
 
 ## Ludwig config
 
-`ludwig_config.json` (split: explicit `preprocessing.split` random 0.8/0.1/0.1, which dflow must not override):
+`ludwig_config.json` (split: explicit `preprocessing.split` random 0.8/0.1/0.1, which kmlops must not override):
 
 ```json
 {
@@ -30,7 +30,7 @@
 }
 ```
 
-## Launch against dflow
+## Launch against kmlops
 
 ```bash
 curl -X POST "http://localhost:8000/api/mlops/experiments" \

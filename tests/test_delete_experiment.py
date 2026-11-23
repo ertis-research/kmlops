@@ -65,7 +65,7 @@ def test_job_name_falls_back_to_training_id(client, set_store, monkeypatch):
     calls = _patch_delete_job(monkeypatch)
 
     assert client.delete(URL).status_code == 200
-    assert calls == ["dflow-train-job-abc123"]
+    assert calls == ["kmlops-train-job-abc123"]
 
 
 def test_no_active_training_does_not_touch_kubernetes(client, set_store, monkeypatch):
