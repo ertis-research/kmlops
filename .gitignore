@@ -5,6 +5,10 @@ venv/
 # Local training store (SQLite)
 data/*.db
 data/*.db-*
-.claude/
+.claude/*
+!.claude/agents/
 .venv/
 .pytest_cache/
+
+# Local Claude Code notes (real environment values)
+CLAUDE.local.md
