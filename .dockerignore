@@ -1,35 +1,48 @@
-# Secrets: configuration comes from the environment / Kubernetes Secrets
+# The image only needs requirements.txt and src/ (see Dockerfile). Everything else is excluded
+# to keep it small and to keep local or sensitive files out of it.
+
+# Secrets and local environment values
 .env
+.env.*
+CLAUDE.local.md
 
 # Virtual environments
 venv/
 env/
-.env/
 .venv/
 
 # Git
 .git/
 .gitignore
+.gitattributes
 
 # Python cache and compiled files
-__pycache__/
-*.pyc
-*.pyo
-*.pyd
+**/__pycache__/
+**/*.pyc
+**/*.pyo
+**/*.pyd
 
-# IDE and local configs
+# IDE, Claude Code and local configs
 .vscode/
 .idea/
+.claude/
+CLAUDE.md
 
-# Local training store (SQLite)
-data/*.db
-data/*.db-*
+# Local training store (SQLite); in the cluster it lives in the /data volume
+data/
 
-# Kubernetes manifests (not needed inside the image)
+# Kubernetes manifests and build files (not needed inside the image)
 k8s/
+Dockerfile
+.dockerignore
 
-# Tests and dev dependencies (not needed inside the image)
+# Tests and dev dependencies
 tests/
 pytest.ini
 requirements-dev.txt
 .pytest_cache/
+
+# Docs and example datasets
+docs/
+examples/
+*.md
