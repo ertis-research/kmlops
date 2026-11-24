@@ -5,7 +5,7 @@ from pathlib import Path
 
 from kubernetes import client
 
-from src.config import get_settings
+from src.config import Settings, get_settings
 from src.db.store import get_store
 from src.integrations.k8s import (
     CONTAINER_NAME,
@@ -18,6 +18,24 @@ from src.integrations.k8s import (
 
 # Source of the script the pod runs (see trainer_script.py).
 TRAINING_SCRIPT = (Path(__file__).parent / "trainer_script.py").read_text(encoding="utf-8")
+
+
+def _pip_install_command(settings: Settings) -> str:
+    """The pip line of the pod: pinned minio and mlflow, then the configured extra packages."""
+    requirements = [
+        f"minio=={settings.training_minio_version}",
+        f"mlflow=={settings.training_mlflow_version}",
+        *settings.training_pip_extra_packages,
+    ]
+    # Every value was validated in config.py, so double quotes are enough.
+    return "pip install -q " + " ".join(f'"{r}"' for r in requirements)
+
+
+def _secret_env_var(name: str, secret_name: str, key: str) -> client.V1EnvVar:
+    return client.V1EnvVar(
+        name=name,
+        value_from=client.V1EnvVarSource(secret_key_ref=client.V1SecretKeySelector(name=secret_name, key=key)),
+    )
 
 
 def build_training_job(training_id: str, config: dict, minio_path: str, experiment_name: str, model_name: str) -> client.V1Job:
@@ -35,12 +53,24 @@ def build_training_job(training_id: str, config: dict, minio_path: str, experime
         "KMLOPS_MINIO_PATH": minio_path,
         "KMLOPS_LUDWIG_CONFIG": json.dumps(config),
     }
-    bash_command = f"pip install minio mlflow -q && cat << 'EOF' > run.py\n{TRAINING_SCRIPT}\nEOF\npython -u run.py"
+    # With MINIO_CREDENTIALS_SECRET the credentials are read from that Secret by the pod
+    # and never appear in the Job spec.
+    secret_keys = {
+        "MINIO_ACCESS_KEY": settings.minio_credentials_access_key_key,
+        "MINIO_SECRET_KEY": settings.minio_credentials_secret_key_key,
+    }
+    env_vars = []
+    for k, v in env.items():
+        if settings.minio_credentials_secret and k in secret_keys:
+            env_vars.append(_secret_env_var(k, settings.minio_credentials_secret, secret_keys[k]))
+        else:
+            env_vars.append(client.V1EnvVar(name=k, value=v))
+    bash_command = f"{_pip_install_command(settings)} && cat << 'EOF' > run.py\n{TRAINING_SCRIPT}\nEOF\npython -u run.py"
 
     container = client.V1Container(
         name=CONTAINER_NAME,
         image=settings.training_image,
-        env=[client.V1EnvVar(name=k, value=v) for k, v in env.items()],
+        env=env_vars,
         command=["/bin/bash", "-c"],
         args=[bash_command],
     )

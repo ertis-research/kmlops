@@ -46,6 +46,12 @@ spec:
         imagePullPolicy: Always
         ports:
         - containerPort: 8000
+        env:
+        # Training Jobs read the MinIO credentials from this Secret (secretKeyRef) instead of getting
+        # them in plain text in the Job spec. The default keys (MINIO_ACCESS_KEY / MINIO_SECRET_KEY)
+        # are the ones deploy.sh writes. "env" takes precedence over "envFrom".
+        - name: MINIO_CREDENTIALS_SECRET
+          value: kmlops-minio-credentials
         envFrom:
         - secretRef:
             name: kmlops-minio-credentials

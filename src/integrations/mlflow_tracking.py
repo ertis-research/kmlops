@@ -1,10 +1,12 @@
 """Helpers to relate kmlops trainings with MLflow experiments and runs."""
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterable, List, Optional
 
 import mlflow
 from mlflow.entities import Experiment as MlflowExperiment
 from mlflow.entities import Run as MlflowRun
 from mlflow.entities import ViewType
+from mlflow.exceptions import MlflowException
+from mlflow.protos.databricks_pb2 import RESOURCE_DOES_NOT_EXIST, ErrorCode
 from mlflow.tracking import MlflowClient
 
 # Tag set by the training pod on the run it registers. The pod script (trainer_script.py) cannot
@@ -74,13 +76,58 @@ def discard_run(run: MlflowRun) -> List[str]:
     if run.info.status in ACTIVE_RUN_STATUSES:
         client.set_terminated(run_id, "KILLED")
 
-    deleted_versions: List[str] = []
-    for version in client.search_model_versions(f"run_id='{run_id}'"):
-        client.delete_model_version(version.name, version.version)
-        deleted_versions.append(f"{version.name}/{version.version}")
+    deleted_versions = _delete_run_model_versions(client, run_id)
+    delete_models_without_versions({v.split("/", 1)[0] for v in deleted_versions}, client)
 
     client.delete_run(run_id)
     return deleted_versions
+
+
+def _delete_run_model_versions(client: MlflowClient, run_id: str) -> List[str]:
+    """Deletes the model versions registered from a run. Returns them as 'name/version'."""
+    deleted: List[str] = []
+    for version in client.search_model_versions(f"run_id='{run_id}'"):
+        client.delete_model_version(version.name, version.version)
+        deleted.append(f"{version.name}/{version.version}")
+    return deleted
+
+
+def delete_models_without_versions(model_names: Iterable[str], client: Optional[MlflowClient] = None) -> List[str]:
+    """Deletes the registered models of `model_names` that have no version left. A model that still
+    has versions (e.g. registered from another experiment) is kept. Returns the deleted names."""
+    client = client or MlflowClient()
+    deleted: List[str] = []
+    for name in sorted(set(model_names)):
+        try:
+            model = client.get_registered_model(name)
+        except MlflowException as e:
+            if e.error_code == ErrorCode.Name(RESOURCE_DOES_NOT_EXIST):
+                continue
+            raise
+        if not model.latest_versions:
+            client.delete_registered_model(name)
+            deleted.append(name)
+    return deleted
+
+
+def delete_experiment_model_versions(experiment_id: str) -> Dict[str, List[str]]:
+    """Deletes the model versions registered from any run of an experiment (deleted runs included),
+    then the registered models left without versions.
+
+    Returns {"model_versions": ['name/version', ...], "registered_models": ['name', ...]}.
+    """
+    client = MlflowClient()
+    versions: List[str] = []
+    page_token = None
+    while True:
+        runs = client.search_runs([experiment_id], run_view_type=ViewType.ALL, page_token=page_token)
+        for run in runs:
+            versions += _delete_run_model_versions(client, run.info.run_id)
+        page_token = runs.token
+        if not page_token:
+            break
+    models = delete_models_without_versions({v.split("/", 1)[0] for v in versions}, client)
+    return {"model_versions": versions, "registered_models": models}
 
 
 def prepare_experiment_for_training(experiment_name: str) -> None:

@@ -72,19 +72,36 @@ def to_timestamp_ms(val: Any) -> Optional[int]:
     return None
 
 
+def _is_missing(value: Any) -> bool:
+    """None, NaN or NaT. Used for the cells mlflow.search_runs fills for keys a run does not have."""
+    if value is None:
+        return True
+    try:
+        return bool(pd.isna(value))
+    except (TypeError, ValueError):
+        return False
+
+
 def parse_flattened_run(raw_data: dict[str, Any], source: str = "mlflow") -> Run:
     metrics: dict[str, float] = {}
     params: dict[str, Any] = {}
     tags: dict[str, str] = {}
 
-    # Separate prefixed fields
+    # Separate prefixed fields. mlflow.search_runs returns the union of the metric/param/tag
+    # columns of all the runs, so a run gets NaN/None for the keys it does not have (e.g. runs
+    # of the same experiment with different output features). Those keys are skipped, and so
+    # are non-finite metric values, which are not valid JSON.
     for key, value in raw_data.items():
+        if _is_missing(value):
+            continue
         if key.startswith("metrics."):
             clean_key = key[len("metrics."):]
             try:
-                metrics[clean_key] = float(value)
+                number = float(value)
             except (ValueError, TypeError):
-                pass
+                continue
+            if math.isfinite(number):
+                metrics[clean_key] = number
         elif key.startswith("params."):
             clean_key = key[len("params."):]
             params[clean_key] = value

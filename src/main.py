@@ -1,5 +1,6 @@
 import asyncio
 import contextlib
+import logging
 from contextlib import asynccontextmanager
 
 import mlflow
@@ -7,10 +8,12 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from src.api.experiments import router as experiments_router
-from src.config import get_settings
+from src.config import config_warnings, get_settings
 from src.db.store import close_store, init_store
 from src.integrations.minio_storage import ensure_bucket
 from src.training.status import poll_training_status_forever
+
+logger = logging.getLogger(__name__)
 
 
 @asynccontextmanager
@@ -18,6 +21,8 @@ async def lifespan(app: FastAPI):
     # Fails fast (and names the problem) if a required setting is missing,
     # the database is unreachable or MinIO cannot be used.
     settings = get_settings()
+    for warning in config_warnings(settings):
+        logger.warning(warning)
     if settings.mlflow_enabled:
         mlflow.set_tracking_uri(settings.mlflow_tracking_uri)
     init_store(settings)

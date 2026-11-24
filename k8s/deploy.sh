@@ -31,7 +31,10 @@ DEPLOYMENT="kmlops"
 #  - SQLITE_PATH: the local path (e.g. ./data/kmlops.db) would put the database outside the volume;
 #    in the cluster kmlops uses its default, /data/kmlops.db, which is the persistent volume.
 #  - KUBERNETES_CONFIG_PATH: inside the cluster kmlops uses its service account.
-NOT_FOR_CLUSTER="KMLOPS_IMAGE REGISTRY_SERVER REGISTRY_USERNAME REGISTRY_PASSWORD SQLITE_PATH KUBERNETES_CONFIG_PATH"
+#  - MINIO_CREDENTIALS_SECRET and its *_KEY_KEY variables: deployment.yaml fixes the Secret to
+#    $CONFIG_SECRET because this script creates it with the default keys (MINIO_ACCESS_KEY,
+#    MINIO_SECRET_KEY); a local .env must not override that.
+NOT_FOR_CLUSTER="KMLOPS_IMAGE REGISTRY_SERVER REGISTRY_USERNAME REGISTRY_PASSWORD SQLITE_PATH KUBERNETES_CONFIG_PATH MINIO_CREDENTIALS_SECRET MINIO_CREDENTIALS_ACCESS_KEY_KEY MINIO_CREDENTIALS_SECRET_KEY_KEY"
 
 die() { echo "ERROR: $*" >&2; exit 1; }
 info() { echo "==> $*"; }

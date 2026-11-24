@@ -5,9 +5,10 @@ from fastapi import APIRouter, BackgroundTasks, File, Form, HTTPException, Query
 from kubernetes.client.rest import ApiException
 
 from src.config import get_settings
-from src.db.store import ActiveTrainingExists
+from src.db.store import ActiveModelTrainingExists, ActiveTrainingExists
 from src.integrations.minio_storage import MINIO_ERRORS
 from src.services import experiments, runs, trainings
+from src.services.feature_schema import FeatureCheckUnavailable, IncompatibleFeatures, InvalidFeatures
 from src.services.trainings import NoActiveTraining
 
 router = APIRouter()
@@ -64,13 +65,20 @@ async def create_experiment(
     config_json: str = Form(...),
     dependencies: str = Form("[]"),
     experiment_name: str = Form("kmlops-default-experiment"),
-    model_name: str = Form("ludwig_model")
+    model_name: Optional[str] = Form(None, description="Name of the model in the MLflow Model Registry. Defaults to experiment_name."),
 ):
     """
     Receives the data file, model type, configuration, and dependencies to create a new experiment.
     Uploads the data to MinIO and triggers a Kubernetes Job in the background.
-    Returns 409 if the experiment already has a training in progress.
+    The trained model is registered in MLflow as a new version of `model_name` (default: the
+    experiment name). Several experiments can feed the same model.
+    Returns 409 if the experiment, or the model in any experiment, already has a training in
+    progress, or if the input/output features (name and type) differ from those of the existing
+    versions of the model. Returns 422 if config_json does not define valid input_features and
+    output_features. Returns 502 if the existing versions cannot be read from MLflow.
     """
+    model_name = (model_name or "").strip() or experiment_name
+
     # 1. Parse and validate JSON inputs
     try:
         config_dict = json.loads(config_json)
@@ -88,11 +96,23 @@ async def create_experiment(
 
     try:
         experiment = await experiments.create_experiment(background_tasks, csv_file, model_type, experiment_name, model_name, config_dict, dependencies_list)
+    except ActiveModelTrainingExists:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Model '{model_name}' already has a training in progress in another experiment. "
+            "Cancel it or wait until it finishes.",
+        )
     except ActiveTrainingExists:
         raise HTTPException(
             status_code=409,
             detail=f"Experiment '{experiment_name}' already has a training in progress. Cancel it or wait until it finishes.",
         )
+    except InvalidFeatures as e:
+        raise HTTPException(status_code=422, detail=str(e))
+    except IncompatibleFeatures as e:
+        raise HTTPException(status_code=409, detail=str(e))
+    except FeatureCheckUnavailable as e:
+        raise HTTPException(status_code=502, detail=str(e))
     experiment_id = experiment["internal_id"]
     return {
         "message": f"Experiment {experiment_id} successfully created",
@@ -105,9 +125,11 @@ async def create_experiment(
 def delete_experiment(experiment_name: str):
     """Deletes an experiment by its NAME from the local DB, MLflow and MinIO (training CSVs of all its trainings).
 
-    If a training is in progress, its Kubernetes Job is stopped first. If that fails, or if the
-    MinIO data cannot be deleted, nothing else is deleted and 502 is returned so the request
-    can be retried.
+    The model versions registered from its runs are deleted from the MLflow Model Registry, and so
+    are the registered models left without versions (a model with versions from other experiments
+    keeps those). If a training is in progress, its Kubernetes Job is stopped first. If that fails,
+    or if the MinIO data or the model versions cannot be deleted, the rows and the MLflow experiment
+    are kept and 502 is returned so the request can be retried.
     """
     try:
         deleted = experiments.delete_experiment(experiment_name, mlflowb=mlflow_enabled())
@@ -115,6 +137,8 @@ def delete_experiment(experiment_name: str):
         raise HTTPException(status_code=502, detail=f"Kubernetes error while deleting the training job: {e.status} {e.reason}")
     except MINIO_ERRORS as e:
         raise HTTPException(status_code=502, detail=f"MinIO error while deleting training data: {e}")
+    except experiments.ModelRegistryError as e:
+        raise HTTPException(status_code=502, detail=f"MLflow error while deleting the registered model versions: {e}")
 
     if not deleted:
         raise HTTPException(status_code=404, detail=f"Experiment '{experiment_name}' not found in local DB or MLflow")

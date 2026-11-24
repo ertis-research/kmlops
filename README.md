@@ -109,12 +109,18 @@ All configuration comes from environment variables. If a required variable is mi
 | `MINIO_URL`, `MINIO_ACCESS_KEY`, `MINIO_SECRET_KEY` | yes | | MinIO endpoint and credentials |
 | `BUCKET_NAME` | yes | | Bucket for the uploaded datasets |
 | `MINIO_SECURE` | no | `true` | Use HTTPS for MinIO |
+| `MINIO_CREDENTIALS_SECRET` | no | | Name of a Kubernetes Secret holding the MinIO credentials. If set, training Jobs read them with `secretKeyRef` and they do not appear in the Job spec. If not set, they are copied in plain text into every Job (kmlops logs a warning at startup) |
+| `MINIO_CREDENTIALS_ACCESS_KEY_KEY` | no | `MINIO_ACCESS_KEY` | Key of that Secret holding the access key |
+| `MINIO_CREDENTIALS_SECRET_KEY_KEY` | no | `MINIO_SECRET_KEY` | Key of that Secret holding the secret key |
 | `KUBERNETES_NAMESPACE` | yes | | Namespace where training Jobs run |
 | `KUBERNETES_CONFIG_PATH` | no | `~/.kube/config` | Kubeconfig, used only outside the cluster |
 | `MLFLOW_TRACKING_URI` | no | | MLflow server. Without it, only local trainings are tracked |
 | `TRAINING_IMAGE` | no | `ludwigai/ludwig:latest` | Image of the training Jobs |
 | `TRAINING_JOB_TTL_SECONDS` | no | `60` | Kubernetes removes finished Jobs after this time |
 | `TRAINING_JOB_BACKOFF_LIMIT` | no | `1` | Retries of a failed training pod |
+| `TRAINING_MLFLOW_VERSION` | no | `3.18.0` | Version of `mlflow` that the training pod installs (keep in sync with `requirements.txt`) |
+| `TRAINING_MINIO_VERSION` | no | `7.2.20` | Version of `minio` that the training pod installs (keep in sync with `requirements.txt`) |
+| `TRAINING_PIP_EXTRA_PACKAGES` | no | | Extra packages for the training pod: comma-separated `name==version` entries (e.g. `scikit-learn==1.5.2,pandas==2.2.3`). Other formats are rejected |
 | `STATUS_POLL_INTERVAL_SECONDS` | no | `10` | How often training statuses are refreshed |
 | `LAUNCH_TIMEOUT_SECONDS` | no | `300` | A training still `queued`/`launching_job` after this time is marked `failed` |
 | `DB_BACKEND` | no | `sqlite` | `sqlite` or `postgres` |
@@ -204,7 +210,7 @@ What it takes from `.env`:
 | `KUBERNETES_NAMESPACE` | The namespace where kmlops is deployed and where it launches the training Jobs |
 | `KMLOPS_IMAGE` | The kmlops image that the script builds, pushes and deploys |
 | `REGISTRY_SERVER`, `REGISTRY_USERNAME`, `REGISTRY_PASSWORD` | The `kmlops-registry-creds` pull Secret. Required the first time: `deploy.sh` fails if `kmlops-registry-creds` does not exist in the namespace and these are not set. An older `model-registry-creds` Secret is no longer reused. Once `kmlops-registry-creds` exists, you can omit them to keep it |
-| Everything else | The `kmlops-minio-credentials` Secret, i.e. kmlops's configuration. `SQLITE_PATH` and `KUBERNETES_CONFIG_PATH` are local-only and are not copied: in the cluster kmlops uses `/data/kmlops.db` (the persistent volume) and its service account |
+| Everything else | The `kmlops-minio-credentials` Secret, i.e. kmlops's configuration. `SQLITE_PATH` and `KUBERNETES_CONFIG_PATH` are local-only and are not copied: in the cluster kmlops uses `/data/kmlops.db` (the persistent volume) and its service account. `MINIO_CREDENTIALS_SECRET` and its two `*_KEY_KEY` variables are not copied either: `k8s/deployment.yaml` sets `MINIO_CREDENTIALS_SECRET=kmlops-minio-credentials`, so the training Jobs reference that Secret with `secretKeyRef` instead of carrying the MinIO credentials in their spec |
 
 **Registry credentials.** They need **pull permission on the registry project where the image is**; otherwise the pod stays in `ImagePullBackOff` with `401 Unauthorized`. Harbor robot accounts are usually limited to their own project. For example, a robot of project `project-a` can pull from `<registry>/project-a/...` but not from `<registry>/project-b/...`. Push the image to the robot's project, or give the robot pull permission on the image's project. Use a robot account, not a personal user.
 
@@ -280,7 +286,7 @@ kmlops refreshes the status of active trainings in the background from the Kuber
     | `config_json`     | Stringified JSON object containing Ludwig configuration parameters |
     | `dependencies`    | (Optional) JSON list or comma-separated string of dependencies     |
     | `experiment_name` | Logical grouping name in MLflow (Default: `kmlops-default-experiment`) |
-    | `model_name`      | Final model artifact name in the MLflow Model Registry (Default: `ludwig_model`) |
+    | `model_name`      | Model name in the MLflow Model Registry; each training registers a new version of it (Default: the value of `experiment_name`) |
 
 #### Example cURL Request
 
@@ -297,14 +303,25 @@ curl -X POST "http://localhost:8000/api/mlops/experiments" \
   }'
 ```
 
-Returns `409 Conflict` if the experiment already has a training in progress.
+**Same features for every version of a model.** Experiments and models are independent: several experiments can register versions of the same `model_name`, and one experiment can train several models. But all the versions of a model must have the same `input_features` and `output_features`: same names and same types (the old Ludwig type `numerical` counts as `number`). Their order and per-feature settings (encoders, preprocessing...) can change, and so can the rest of the config (trainer, combiner...). To train a model with different features, use another `model_name`.
+
+The new training must match two references:
+- The latest training of the model in the kmlops database, in any experiment, that is `completed` or in progress. Failed and cancelled trainings are not used.
+- The latest version of the model in the MLflow Model Registry. This covers models that have no rows in the kmlops database. Their features come from the `input_features` / `output_features` run parameters that Ludwig logs or, if missing, from the `model_hyperparameters.json` of the logged model. A version with neither, such as a model registered outside kmlops, is not checked.
+
+Errors:
+- `409 Conflict` if the experiment already has a training in progress.
+- `409 Conflict` if the model (`model_name`) already has a training in progress in another experiment. The database allows one per model, so two trainings with different features can never become versions of the same model at the same time.
+- `409 Conflict` if the input or output features differ from those of the existing versions of the model. `detail` lists the differences.
+- `422` if `config_json` does not define `input_features` and `output_features` as non-empty lists whose entries have a `name` and a `type`, or if a feature name is repeated.
+- `502` if the versions of the model cannot be read from MLflow. Nothing is created, so the request can be retried.
 
 ### 3. Delete Experiment
 
 * **Method:** `DELETE`
 * **Path:** `/api/mlops/experiments/{experiment_name}`
-* **Description:** Removes the experiment from the local database and the MLflow Tracking Server, and deletes the uploaded datasets (training CSVs) of all its trainings from MinIO. If a training is in progress, its Kubernetes Job is stopped first.
-* **Errors:** `404` if the experiment does not exist. `502` if the Kubernetes Job of the training in progress could not be deleted, or if the datasets could not be deleted from MinIO; nothing else is deleted in that case, so the request can be retried.
+* **Description:** Removes the experiment from the local database and the MLflow Tracking Server, and deletes the uploaded datasets (training CSVs) of all its trainings from MinIO. It also deletes from the MLflow Model Registry the model versions registered by the runs of the experiment, and the registered models left without versions. A model that also has versions from other experiments keeps those, so it is not deleted. If a training is in progress, its Kubernetes Job is stopped first. It also cleans up the versions left in the registry by an experiment deleted before this cleanup existed.
+* **Errors:** `404` if the experiment does not exist. `502` if the Kubernetes Job of the training in progress could not be deleted, if the datasets could not be deleted from MinIO, or if the model versions could not be deleted from the MLflow Model Registry (also when MLflow is unreachable). In that case the local rows and the MLflow experiment are kept, so the request can be retried.
 
 ### 4. Cancel Training
 

@@ -24,6 +24,10 @@ class ActiveTrainingExists(Exception):
     """Raised when an experiment already has a training in progress."""
 
 
+class ActiveModelTrainingExists(ActiveTrainingExists):
+    """Raised when the model (model_name) already has a training in progress, in any experiment."""
+
+
 COLUMNS = (
     "training_id",
     "experiment_name",
@@ -44,6 +48,7 @@ JSON_COLUMNS = ("config", "dependencies")
 UPDATABLE_COLUMNS = ("status", "status_reason", "job_name", "mlflow_run_id", "minio_path")
 
 ONE_ACTIVE_INDEX = "trainings_one_active_idx"
+ONE_ACTIVE_PER_MODEL_INDEX = "trainings_one_active_per_model_idx"
 
 _status_list = ", ".join(f"'{s}'" for s in ALL_STATUSES)
 _active_list = ", ".join(f"'{s}'" for s in ACTIVE_STATUSES)
@@ -75,6 +80,15 @@ SCHEMA = (
     """,
 )
 
+# At most one training in progress per model (model_name), in any experiment. Together with the
+# feature check of POST /experiments it guarantees that two trainings with different features
+# cannot become versions of the same model at the same time. Rows without model_name (NULL) never
+# conflict. Created apart from SCHEMA because existing data may violate it (see TrainingStore.init).
+MODEL_INDEX = f"""
+    CREATE UNIQUE INDEX IF NOT EXISTS {ONE_ACTIVE_PER_MODEL_INDEX} ON trainings (model_name)
+    WHERE status IN ({_active_list})
+    """
+
 
 def now_ms() -> int:
     return int(time.time() * 1000)
@@ -102,12 +116,24 @@ class TrainingStore:
         """Runs one statement. Returns a list of dict rows if `fetch`, else the rowcount."""
         raise NotImplementedError
 
-    def _is_active_conflict(self, exc: Exception) -> bool:
+    def _active_conflict(self, exc: Exception) -> Optional[str]:
+        """ONE_ACTIVE_INDEX or ONE_ACTIVE_PER_MODEL_INDEX if `exc` is a violation of it, else None."""
         raise NotImplementedError
 
     def init(self) -> None:
         for statement in SCHEMA:
             self._execute(statement)
+        try:
+            self._execute(MODEL_INDEX)
+        except Exception as exc:
+            # Only possible if two trainings of the same model are in progress right now (created
+            # before this index existed). Failing would stop kmlops, and with it the poller that
+            # finishes those trainings, so it starts without the index and retries on next startup.
+            print(
+                f"WARNING: could not create {ONE_ACTIVE_PER_MODEL_INDEX} ({exc}). Several trainings of the same "
+                "model are in progress; until kmlops restarts after they finish, two trainings of one model "
+                "can run at the same time."
+            )
 
     def close(self) -> None:
         pass
@@ -115,7 +141,8 @@ class TrainingStore:
     # ---- writes -------------------------------------------------------------
 
     def insert(self, record: Dict[str, Any]) -> Dict[str, Any]:
-        """Inserts a training. Raises ActiveTrainingExists if the experiment already has one in progress."""
+        """Inserts a training. Raises ActiveTrainingExists if the experiment already has one in progress,
+        or ActiveModelTrainingExists if its model_name has one in progress in another experiment."""
         ts = now_ms()
         values = dict(record)
         values.setdefault("created_at", ts)
@@ -128,8 +155,14 @@ class TrainingStore:
         try:
             self._execute(sql, [values[c] for c in cols])
         except Exception as exc:
-            if self._is_active_conflict(exc):
+            conflict = self._active_conflict(exc)
+            if conflict == ONE_ACTIVE_INDEX:
                 raise ActiveTrainingExists(record["experiment_name"]) from exc
+            if conflict == ONE_ACTIVE_PER_MODEL_INDEX:
+                # Both indexes can be violated at once; the database may report either.
+                if self.active(record["experiment_name"]):
+                    raise ActiveTrainingExists(record["experiment_name"]) from exc
+                raise ActiveModelTrainingExists(record.get("model_name")) from exc
             raise
         created = self.get(record["training_id"])
         assert created is not None
@@ -184,6 +217,16 @@ class TrainingStore:
         trainings = self.list_by_name(experiment_name)
         return trainings[0] if trainings else None
 
+    def latest_model_training(self, model_name: str, statuses: Iterable[str]) -> Optional[Dict[str, Any]]:
+        """Newest training of a model (any experiment) in one of `statuses`."""
+        wanted = list(statuses)
+        sql = (
+            f"SELECT * FROM trainings WHERE model_name = ? AND status IN ({', '.join('?' for _ in wanted)})"
+            " ORDER BY created_at DESC LIMIT 1"
+        )
+        rows = self._execute(sql, [model_name, *wanted], fetch=True)
+        return _decode(rows[0]) if rows else None
+
     def active(self, experiment_name: Optional[str] = None) -> List[Dict[str, Any]]:
         placeholders = ", ".join("?" for _ in ACTIVE_STATUSES)
         sql = f"SELECT * FROM trainings WHERE status IN ({placeholders})"
@@ -213,8 +256,15 @@ class SQLiteStore(TrainingStore):
                 return [dict(row) for row in cursor.fetchall()]
             return cursor.rowcount
 
-    def _is_active_conflict(self, exc: Exception) -> bool:
-        return isinstance(exc, sqlite3.IntegrityError) and "trainings.experiment_name" in str(exc)
+    def _active_conflict(self, exc: Exception) -> Optional[str]:
+        # SQLite names the columns, not the index: "UNIQUE constraint failed: trainings.model_name".
+        if not isinstance(exc, sqlite3.IntegrityError):
+            return None
+        if "trainings.experiment_name" in str(exc):
+            return ONE_ACTIVE_INDEX
+        if "trainings.model_name" in str(exc):
+            return ONE_ACTIVE_PER_MODEL_INDEX
+        return None
 
     def close(self) -> None:
         with self._lock:
@@ -248,10 +298,11 @@ class PostgresStore(TrainingStore):
                     return [dict(row) for row in cursor.fetchall()]
                 return cursor.rowcount
 
-    def _is_active_conflict(self, exc: Exception) -> bool:
+    def _active_conflict(self, exc: Exception) -> Optional[str]:
         if not isinstance(exc, self._psycopg.errors.UniqueViolation):
-            return False
-        return getattr(exc.diag, "constraint_name", None) == ONE_ACTIVE_INDEX
+            return None
+        name = getattr(exc.diag, "constraint_name", None)
+        return name if name in (ONE_ACTIVE_INDEX, ONE_ACTIVE_PER_MODEL_INDEX) else None
 
 
 _store: Optional[TrainingStore] = None

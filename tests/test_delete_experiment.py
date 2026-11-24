@@ -138,3 +138,79 @@ def test_unknown_experiment_does_not_touch_minio(client, set_store, monkeypatch,
 
     assert client.delete(URL).status_code == 404
     assert minio_delete.calls == []
+
+
+# ---- MLflow Model Registry -----------------------------------------------------
+
+
+@pytest.fixture
+def mlflow_delete(monkeypatch):
+    """MLflow enabled with a fake experiment and registry cleanup, as used in src.services.experiments."""
+    state = SimpleNamespace(
+        experiment=SimpleNamespace(experiment_id="7", lifecycle_stage="active"),
+        registry_result={"model_versions": ["my-exp/1", "my-exp/2"], "registered_models": ["my-exp"]},
+        registry_error=None,
+        registry_calls=[],
+        deleted_experiments=[],
+    )
+
+    def fake_registry(experiment_id):
+        state.registry_calls.append(experiment_id)
+        if state.registry_error is not None:
+            raise state.registry_error
+        return state.registry_result
+
+    monkeypatch.setattr(experiments_module, "delete_experiment_model_versions", fake_registry)
+    monkeypatch.setattr(
+        experiments_module,
+        "mlflow",
+        SimpleNamespace(
+            get_experiment_by_name=lambda name: state.experiment,
+            delete_experiment=lambda eid: state.deleted_experiments.append(eid),
+        ),
+    )
+    monkeypatch.setattr(api_module, "mlflow_enabled", lambda: True)
+    return state
+
+
+def test_registered_model_versions_are_deleted(client, set_store, monkeypatch, mlflow_delete):
+    store = set_store(latest=make_training(status="completed"))
+    _patch_delete_job(monkeypatch)
+
+    assert client.delete(URL).status_code == 200
+    assert mlflow_delete.registry_calls == ["7"]
+    assert store.deleted_names == ["my-exp"]
+    assert mlflow_delete.deleted_experiments == ["7"]
+
+
+def test_registry_error_returns_502_and_keeps_rows_and_experiment(client, set_store, monkeypatch, mlflow_delete):
+    store = set_store(latest=make_training(status="completed"))
+    _patch_delete_job(monkeypatch)
+    mlflow_delete.registry_error = RuntimeError("connection refused")
+
+    response = client.delete(URL)
+
+    assert response.status_code == 502
+    assert "MLflow error while deleting the registered model versions" in response.json()["detail"]
+    assert store.deleted_names == []
+    assert mlflow_delete.deleted_experiments == []
+
+
+def test_soft_deleted_experiment_with_leftover_versions_is_cleaned(client, set_store, monkeypatch, mlflow_delete):
+    """Experiments deleted before this cleanup existed left their versions in the registry."""
+    set_store()
+    _patch_delete_job(monkeypatch)
+    mlflow_delete.experiment = SimpleNamespace(experiment_id="7", lifecycle_stage="deleted")
+
+    assert client.delete(URL).status_code == 200
+    assert mlflow_delete.registry_calls == ["7"]
+    assert mlflow_delete.deleted_experiments == []
+
+
+def test_soft_deleted_experiment_without_versions_is_404(client, set_store, monkeypatch, mlflow_delete):
+    set_store()
+    _patch_delete_job(monkeypatch)
+    mlflow_delete.experiment = SimpleNamespace(experiment_id="7", lifecycle_stage="deleted")
+    mlflow_delete.registry_result = {"model_versions": [], "registered_models": []}
+
+    assert client.delete(URL).status_code == 404

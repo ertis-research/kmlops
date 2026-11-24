@@ -1,4 +1,5 @@
 """Experiments: one entry per model name, merging local trainings and MLflow history."""
+import asyncio
 import uuid
 from dataclasses import dataclass, field
 from typing import Any, Dict, List, Optional, cast
@@ -13,10 +14,12 @@ from src.integrations.k8s import delete_training_job, job_name_for
 from src.integrations.minio_storage import delete_training_data, upload_csv_to_minio
 from src.integrations.mlflow_tracking import (
     TRAINING_ID_TAG,
+    delete_experiment_model_versions,
     get_active_experiment,
     prepare_experiment_for_training,
 )
 from src.schemas import Experiment, PaginatedResult
+from src.services.feature_schema import check_compatible_features
 from src.services.pagination import paginate
 from src.training.launcher import train_model_job
 
@@ -169,8 +172,16 @@ async def create_experiment(
     dependencies_list: List[Any],
 ) -> Experiment:
     """Registers a training and launches its Kubernetes Job in the background.
-    Raises ActiveTrainingExists if the experiment already has a training in progress."""
+
+    The trained model is registered in MLflow as a new version of `model_name`.
+    Raises ActiveTrainingExists if the experiment already has a training in progress,
+    ActiveModelTrainingExists if the model has one in progress in another experiment, InvalidFeatures
+    if the config has no valid input/output features, IncompatibleFeatures if they differ from those
+    of the existing versions of the model and FeatureCheckUnavailable if MLflow cannot be read."""
     store = get_store()
+    await asyncio.to_thread(
+        check_compatible_features, store, model_name, config_dict, get_settings().mlflow_enabled
+    )
     file_content = await csv_file.read()
     training_id = str(uuid.uuid4())[:8]
     filename = str(csv_file.filename if csv_file.filename is not None else "csvfile")
@@ -218,13 +229,21 @@ async def create_experiment(
     return build_experiment(experiment_name, store.get(training_id) or training, None, None)
 
 
+class ModelRegistryError(Exception):
+    """The model versions of the experiment could not be deleted from the MLflow Model Registry."""
+
+
 def delete_experiment(experiment_name: str, mlflowb: bool) -> bool:
-    """Deletes the experiment (local rows, MLflow and MinIO datasets), stopping the Job of any training in progress.
+    """Deletes the experiment (local rows, MLflow experiment, its registered model versions and MinIO
+    datasets), stopping the Job of any training in progress.
 
     The training CSVs of every training of the experiment are deleted from MinIO (a training
-    without objects is not an error). If a Job cannot be deleted, the ApiException propagates;
-    if MinIO fails, its error propagates. In both cases nothing else is deleted (rows and
-    MLflow experiment are kept), so the call can be retried.
+    without objects is not an error). The model versions registered from the runs of the
+    experiment are deleted from the MLflow Model Registry, and so are the registered models left
+    without versions; a model that also has versions from other experiments keeps them.
+    If a Job cannot be deleted, the ApiException propagates; if MinIO fails, its error propagates;
+    if the Model Registry fails, ModelRegistryError is raised. In all cases the rows and the MLflow
+    experiment are kept, so the call can be retried.
     """
     store = get_store()
     for training in store.active(experiment_name):
@@ -238,21 +257,33 @@ def delete_experiment(experiment_name: str, mlflowb: bool) -> bool:
         print(f"MinIO: {removed} object(s) of training {training['training_id']} deleted.")
 
     found = False
+    mlflow_exp = None
+    if mlflowb:
+        # Also a soft-deleted experiment: its runs may still have registered versions
+        # (experiments deleted before the registry was cleaned up).
+        try:
+            mlflow_exp = mlflow.get_experiment_by_name(experiment_name)
+            if mlflow_exp is not None:
+                removed_models = delete_experiment_model_versions(mlflow_exp.experiment_id)
+                if removed_models["model_versions"]:
+                    found = True
+                    print(
+                        f"MLflow: model versions {removed_models['model_versions']} of experiment "
+                        f"'{experiment_name}' deleted; registered models deleted: {removed_models['registered_models']}."
+                    )
+        except Exception as e:
+            raise ModelRegistryError(str(e)) from e
+
     deleted = store.delete_by_name(experiment_name)
     if deleted:
         found = True
         print(f"Local DB: {deleted} training(s) of experiment '{experiment_name}' deleted.")
 
-    if mlflowb:
+    if mlflow_exp is not None and mlflow_exp.lifecycle_stage != "deleted":
         try:
-            # Buscar el experimento en MLflow por su nombre
-            mlflow_exp = mlflow.get_experiment_by_name(experiment_name)
-
-            # Si existe y no está ya borrado, lo eliminamos
-            if mlflow_exp and mlflow_exp.lifecycle_stage != "deleted":
-                mlflow.delete_experiment(mlflow_exp.experiment_id)
-                found = True
-                print(f"MLflow: Experiment '{experiment_name}' deleted.")
+            mlflow.delete_experiment(mlflow_exp.experiment_id)
+            found = True
+            print(f"MLflow: Experiment '{experiment_name}' deleted.")
         except Exception as e:
             print(f"Error deleting from MLflow: {str(e)}")
 
